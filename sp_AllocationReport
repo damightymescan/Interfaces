@@ -1,0 +1,107 @@
+USE [Production]
+GO
+/****** Object:  StoredProcedure [dbo].[sp_AllocationReport]    Script Date: 6/9/2015 10:06:26 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		By Izzy 
+-- Create date: <Create Date,,>
+-- Description:	<Description,,>
+-- =============================================
+ALTER PROCEDURE [dbo].[sp_AllocationReport] 
+	 @Effect_Date as datetime,
+     @PayGroup as varchar(MAX)
+	 
+AS
+BEGIN
+	-- SET NOCOUNT ON added to prevent extra result sets from
+	-- interfering with SELECT statements.
+	SET NOCOUNT ON;
+
+    -- Insert statements for procedure here
+/* written by wdchristensen@gmail.com 
+I used Common Table Expressions (CTEs) to increase readability */
+
+
+--qdf_PS_DEPT_01
+
+IF (@Effect_Date IS NULL OR @Effect_Date = CONVERT(DATE, '01/01/1900'))
+BEGIN
+	SET @Effect_Date = CONVERT(DATE, GETDATE())
+	SET @Effect_Date = DATEADD(hour, 23,  @Effect_Date)	
+END
+
+
+
+;WITH qdf_PS_AL_ALA_01 AS 
+(
+SELECT *    
+FROM OPENQUERY(ADP, 'SELECT * FROM PS_AL_ALA')
+),
+qdf_PS_AL_ALA_02 AS 
+(
+SELECT @Effect_Date As EffectiveDate, tbl_Primary.* 
+FROM qdf_PS_AL_ALA_01 as tbl_Primary
+WHERE tbl_Primary.[EFFDT] = 
+	(Select 
+		Max([EFFDT]) as MaxEffDt
+		from qdf_PS_AL_ALA_01 as tbl_Secondary
+		where 
+		tbl_Primary.FILE_NBR = tbl_Secondary.FILE_NBR AND 
+		tbl_Primary.PAYGROUP = tbl_Secondary.PAYGROUP AND
+		@Effect_Date >= tbl_Secondary.[EFFDT] 
+	)
+)
+,
+qdf_PS_AL_ALA_03 AS
+(
+Select tbl_Secondary.* From qdf_PS_AL_ALA_02 As tbl_Primary INNER JOIN ADP..AQ2P.PS_AL_ALA_DATA as tbl_Secondary on 
+		(tbl_Primary.FILE_NBR = tbl_Secondary.FILE_NBR AND 
+		tbl_Primary.PAYGROUP = tbl_Secondary.PAYGROUP AND
+		tbl_Primary.[EFFDT] = tbl_Secondary.[EFFDT])
+		WHERE tbl_Primary.PAYGROUP = @PayGroup
+)	
+, 	
+qdf_PS_AL_ALA_04 AS
+(
+SELECT 
+		PAYGROUP ALA_PAYGROUP,
+		JOB_ED_EMPLID,
+		FILE_NBR ALA_FILE_NBR,
+		EFFDT ALA_EFFDT,
+		ALA_NBR ALA_ALA_NBR,
+		DEPARTMENT_NBR ALA_DEPARTMENT_NBR,
+		DEPARTMENT_PCT ALA_DEPARTMENT_PCT,
+		JOBCOST_NBR ALA_JOBCOST_NBR,
+		JOBCOST_PCT ALA_JOBCOST_PCT,
+		COST_NUM ALA_COST_NUM,
+		COST_NUM_PCT ALA_COST_NUM_PCT
+		
+
+FROM qdf_PS_AL_ALA_03 LEFT JOIN udf_PS_JOB_ED (NULL, NULL, @Effect_Date)
+ON JOB_ED_PAYGROUP = qdf_PS_AL_ALA_03.PAYGROUP AND JOB_ED_FILE_NBR = qdf_PS_AL_ALA_03.FILE_NBR
+)
+, 
+qdf_PS_AL_ALA_05 AS
+(
+SELECT 
+		ALA_PAYGROUP,
+		JOB_ED_EMPLID,
+		PERSONAL_NAME,
+		ALA_FILE_NBR,
+		ALA_EFFDT,
+		ALA_ALA_NBR,
+		ALA_DEPARTMENT_NBR,
+		ALA_DEPARTMENT_PCT,
+		ALA_JOBCOST_NBR,
+		ALA_JOBCOST_PCT,
+		ALA_COST_NUM,
+		ALA_COST_NUM_PCT
+FROM qdf_PS_AL_ALA_04 LEFT JOIN udf_PS_PERSONAL ()
+	ON PERSONAL_EMPLID = JOB_ED_EMPLID
+)
+SELECT * FROM qdf_PS_AL_ALA_05
+END
+
